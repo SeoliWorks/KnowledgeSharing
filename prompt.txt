@@ -129,3 +129,5 @@ https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv_dp_share_cu_r
 5.テストするときの手順の説明,の5つを提示してください。
 
 ゆっくりと段階的に考えていきましょうね。
+
+
