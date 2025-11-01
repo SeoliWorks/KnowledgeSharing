@@ -48,25 +48,6 @@ Gemini:
       * これにより、クライアント（LLM）は追加の `resources/read` を呼び出す必要なく、即座に画像とテキストを組み合わせた応答を生成できます。
       * JSONから読み取ったテキストデータ（アカウント名、本文、URLなど）は、`"type": "text"` ブロックとして整形し、画像リソースブロックと交互に `content` 配列に配置します。
 
-**アーキテクチャ図:**
-
-```mermaid
-graph TD
-    subgraph "MCP Client (Claude Desktop)"
-        A[User Prompt] --> B(LLM)
-        B --> |1. tools/call (wakashu/getRanking)| C{MCP Server}
-        B <-- |4. Tool Result (Text + Embedded Image)| C
-        B --> D[Formatted Response]
-    end
-
-    subgraph "MCP Server (Node.js/TypeScript)"
-        C --> |2. Scan Filesystem| E[/home/info-gather/...]
-        E --> |3. Read & Base64 Encode| C
-        E -- contains --> F[第1回/1-Laptop/Picture1.png]
-        E -- contains --> G[第1回/1-Laptop/TextData1.json]
-    end
-```
-
 -----
 
 ### 2\. 実装にあたってのADR (Architecture Decision Record)
