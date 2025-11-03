@@ -6,6 +6,8 @@ https://modelcontextprotocol.io/specification/2025-06-18/server/tools
 
 https://modelcontextprotocol.io/specification/2025-06-18/server/resources
 
+https://mcpverified.com/server-frameworks/comparison
+
 --------------------------------------------------------------------------------------------------
 
 Gemini:
@@ -32,9 +34,11 @@ MCPサーバーを自作することが私達の共通目標です。
 
 4.実装に向けた各ファイルごとの実際のコード(省略は一切しないように心掛けてください)
 
-5.テストするときの手順の説明
+5.コードの品質を高くするためにした工夫の説明
 
-の5つを提示してください。
+6.テストするときの手順の説明
+
+の6つを提示してください。
 
 ゆっくりと段階的に考えていきましょうね。
 
