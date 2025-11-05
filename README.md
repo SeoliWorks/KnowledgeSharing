@@ -178,33 +178,33 @@ ADR（Architecture Decision Record）は、重要な設計上の意思決定を�
 
 #### `package.json`
 
-コード省略
+> コード省略
 
 #### `tsconfig.json`
 
-コード省略
+> コード省略
 
 #### `src/schemas.ts`
 
-コード省略
+> コード省略
 
 #### `src/data-processor.ts`
 
-コード省略
+> コード省略
 
 #### `src/server-tools.ts`
 
-コード省略
+> コード省略
 
 #### `src/index.ts` (メインエントリポイント)
 
-コード省略
+> コード省略
 
 ### ノード B (クライアント - Claude Desktopの設定)
 
 #### `claude_desktop_config.json` への追記 (設定例)
 
-コード省略
+> コード省略
 
 ---
 
