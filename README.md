@@ -214,20 +214,8 @@ ADR（Architecture Decision Record）は、重要な設計上の意思決定を�
 ### ノード B (クライアント - Claude Desktopの設定)
 
 #### `claude_desktop_config.json` への追記 (設定例)
-```json
-{
-    // 他の設定...
-    "mcpServers": {
-        // wakashu_mcp_server の定義
-        "wakashu_mcp_server": {
-            "type": "http",
-            // Node A の開発サーバーのアクセス可能なURLを指定
-            "url": "http://<Node_AのIPアドレス>:<PORT>/mcp"
-        }
-    }
-    // 他の設定...
-}
-```
+
+コード省略
 
 ---
 
