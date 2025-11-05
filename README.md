@@ -1,680 +1,309 @@
-自分:
+これから'wakashu_mcp_server'の設計やそれを実装するコードを具体的に考えていきましょう。
+考えがまとまり次第、
 
-以下の記事でMCPについて詳しくなってください。
+1.実装にあたってのADR(Architecture Decision Record)
 
-https://modelcontextprotocol.io/specification/2025-06-18/server/tools
+(必要な分だけ項目を作ってかまいません)
 
-https://modelcontextprotocol.io/specification/2025-06-18/server/resources
+2.大まかな設計の説明
 
-https://mcpverified.com/server-frameworks/comparison
+3.データ処理の流れの説明
 
---------------------------------------------------------------------------------------------------
+4.コードの品質を高くするためにした工夫の説明
 
-Gemini:
+5.セキュリティと堅牢性の側面からコードに加えた工夫の説明
 
-この回答は省略
+6.実装に向けた各ファイルごとの実際のコード
 
-------------------------------------------------------------------------------------------------------------------------
+(各ノードごとに項目を分けてください)(省略はしないように心掛けてください)
 
-自分:
+7.開発を進めていくのに必要になる手順の説明
 
-MCPサーバーを自作することが私達の共通目標です。
+(各ノードごとに項目を分けてください)
 
-私達のMCPサーバーを通して「できるようにしたいこと」は「MCPクライアント(LLM)が以下のような会話形式で返答できるようにする」ことです。
+8.テスト項目と実施方法
 
-[中略]
+(各ノードごとに項目を分けてください)
 
-さて、これから私達のMCPサーバーの設計やそれを実装するコードを具体的に考えていきましょう。 考えがまとまり次第、
+(具体的にお願いします)
 
-1.大まかな設計の説明
+9.すべてのテスト項目をクリアした後のその他の手順
 
-2.実装にあたってのADR(Architecture Decision Record)
+(具体的にお願いします)
 
-3.開発していくのに必要になる手順の説明
+10.1から9までの項目では伝えきれなかったその他の情報についての補足
 
-4.実装に向けた各ファイルごとの実際のコード(省略は一切しないように心掛けてください)
+の10個を提示してください。
 
-5.コードの品質を高くするためにした工夫の説明
-
-6.テストするときの手順の説明
-
-の6つを提示してください。
-
-ゆっくりと段階的に考えていきましょうね。
+段階的に考えていきましょうね。
 
 ※全文は'prompt.md'に
 
---------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------
 
-Gemini:
+NotebookLM:
 
-これは非常にエキサイティングなプロジェクトですね！`claude desktop` という具体的なクライアントを想定し、ローカルのファイルシステムをリモートのLLMに公開するMCPサーバーを自作するというのは、MCPの能力を最大限に活用する素晴らしい例です。
+これは、Model Context Protocol (MCP)に基づいたリモートサーバーである「wakashu\_mcp\_server」の設計と実装計画について、段階的に詳細を検討するものです。
 
-ご提示いただいた要件、ファイル構造、そして将来的な拡張性（`編纂時期.json`）のすべてを考慮して、設計と実装のプランを構築しました。
+提示された要件（LLMクライアントとしてのClaude Desktopの利用、TypeScriptでの実装、リモートノード間（ノードA/B）でのアクセス、動的なランキング情報取得、画像ファイルの処理、エラー応答の要件）を満たすように設計を進めます。
 
-ゆっくりと段階的に、私達のMCPサーバーの設計を考えていきましょう。
+---
 
------
+## 1. 実装にあたってのADR (Architecture Decision Record)
 
-## 1\. 大まかな設計の説明
+ADR（Architecture Decision Record）は、重要な設計上の意思決定を記録し、その背景、理由、結果を明確にするためのものです。ここでは、プロジェクトの根幹となる4つの決定を記録します。
 
-私達のMCPサーバーは、ユーザーの「～のランキングを取得して」という自然言語の要求に応答するため、MCPの\*\*`Tools`（ツール）機能\*\*をメインに実装します。
+| ADR ID | タイトル | ステータス |
+| :--- | :--- | :--- |
+| ADR 001 | MCPフレームワークの選定 | Approved |
+| ADR 002 | 通信トランスポートと運用モード | Approved |
+| ADR 003 | メイン機能の実装方法 | Approved |
+| ADR 004 | 画像データの取り扱い | Approved |
 
-1.  **アーキテクチャ**:
-      * **サーバー (Node A)**: 私達が開発するNode.js (TypeScript) アプリケーションです。これはリモートサーバーとして動作し、HTTP/SSE (Server-Sent Events) を介してMCPクライアントと通信します。
-      * **クライアント (Node B)**: `claude desktop` (LLM) です。ユーザーのプロンプトを解釈します。
-2.  **中心となる機能: `Tool`**
-      * 私達は `getWakashuRanking` という名前の単一のツールをサーバーに登録します。
-      * **入力 (Input)**: このツールは、LLMがユーザーのプロンプトから抽出するであろう、以下の3つのパラメータを受け取ります。
-          * `roundName` (string): 例: `"第1回"`
-          * `startRank` (number): 例: `1`
-          * `endRank` (number): 例: `3`
-      * **処理 (Handler)**: ツールが呼び出されると、サーバー（Node A）のローカルファイルシステム (`/home/info-gather/wakashu_mcp_dir/wakashu_dir`) にアクセスします。
-        1.  指定された `roundName` (例: `第1回`) のディレクトリを探します。
-        2.  `startRank` から `endRank` までループします (例: 1, 2, 3)。
-        3.  各順位 `i` について、`i-` で始まるディレクトリ (例: `1-Laptop`, `2-Wakashu`) を探します。
-        4.  そのディレクトリ内で、`TextData{i}.json` と `Picture{i}.[ext]` (png, jpgなど) を検索します。
-        5.  `TextData.json` の中身をパースします。
-        6.  画像ファイル (`Picture*.png` 等) を読み込み、**Base64**形式の文字列にエンコードします。
-      * **出力 (Output)**: ツールは、取得したデータを\*\*`structuredContent`\*\*（構造化コンテント）としてクライアントに返します。この`structuredContent`には、各順位の投稿データ（アカウント名、和歌、Honkaリンク、プロンプト）と、Base64エンコードされた画像データがMIMEタイプと共含まれます。
-3.  **クライアントの動作**:
-      * `claude desktop` は、この `structuredContent` を受け取ります。
-      * LLMは、この構造化データを解釈し、ユーザーの要求した形式（Base64データを `<Picture1.png>` のような画像表示に変換し、テキスト情報をフォーマット）で最終的な回答を生成します。
-4.  **エラーハンドリング**:
-      * 要求された `roundName` のディレクトリが見つからない場合、"指定された回のデータは見つかりませんでした。" というエラーを返します。
-      * ループ中に `startRank` から `endRank` のいずれかのデータ（ディレクトリまたはファイル）が見つからなかった場合、"指定された順位の投稿はありません。" というエラーを返します。
-5.  **将来の拡張性**:
-      * 将来 `編纂時期.json` を使う機能（例: 「2025年の和歌集を検索」）を実装する場合、`getWakashuRanking` とは別に `findWakashuByDate` のような**新しいツールを追加**するだけで対応できます。現在の設計はこの拡張を一切妨げません。
+### ADR 001: MCPフレームワークの選定
 
------
+*   **コンテキスト:** TypeScriptを使用してMCPサーバーを実装する必要がある。安定性、仕様への厳格な準拠、およびリモートデプロイへの対応が求められる。
+*   **決定:** 公式で仕様準拠性の高い**`@modelcontextprotocol/sdk`**を採用する。
+*   **決定の理由:** このSDKはMCP仕様の公式かつ基盤となる実装であり、最大限の制御を提供する「低レベルプリミティブ」を提供するため、サーバーの安定性と将来的な互換性が保証される。
 
-## 2\. 実装にあたってのADR (Architecture Decision Record)
+### ADR 002: 通信トランスポートと運用モード
 
-### ADR-001: 機能の実装方法（Tools vs. Resources）
+*   **コンテキスト:** サーバー（ノードA）が開発者のマシン上にあり、クライアント（ノードB）が別のユーザーマシンにあるため、リモートアクセスが必要である。
+*   **決定:** **Streamable HTTP Transport**を使用し、ウェブフレームワークとして**Express.js**を採用する。運用モードは、セッション管理をしない**ステートレス運用**（リクエストごとに新しいトランスポートを作成）とする。
+*   **決定の理由:** Streamable HTTPはリモートサーバーに適したトランスポートであり、非推奨となったSSEトランスポートよりも推奨される。ステートレス運用は、セッション管理の複雑さを回避し、リクエストIDの衝突を防ぐために推奨されている。
 
-  * **決定**: MCPの **`Tools` 機能**を主軸として実装し、`Resources` 機能は（当面は）使用しない。
-  * **背景**: ユーザーの要求は「ファイル一覧を見たい」(`Resources` が得意) ではなく、「特定の条件でデータを取得・処理してほしい」(`Tools` が得意) という**アクション指向**のものです。
-  * **合理的根拠**:
-    1.  **意図との一致**: `getWakashuRanking` という「関数（ツール）」を定義することは、ユーザーの「ランキング取得」という要求に直結します。
-    2.  **LLMの親和性**: LLMは自然言語を解釈し、それをツールの`inputSchema`（入力定義）にマッピングするのが得意です。
-    3.  **データ処理**: サーバー側でファイルの検索、JSONのパース、画像のBase64エンコードという「処理」を行う必要があります。これは `Resources` の「静的なリソース提供」の範囲を超えています。
-  * **結果**: `getWakashuRanking` ツールを一つ定義し、そのハンドラにすべてのファイルシステムロジックをカプセル化します。
+### ADR 003: メイン機能の実装方法
 
-### ADR-002: 画像データの転送方法
+*   **コンテキスト:** ユーザーのプロンプト（例: 「第1回」「1位から3位」）に基づいて、ファイルシステムからデータを読み取り、複数の情報（テキスト、画像パス、URL）を集約して返す必要がある。これはファイルI/Oとデータ集約という**計算・副作用を伴う操作**である。
+*   **決定:** このデータ取得および整形機能は、**MCP Tool**として実装し、`get_wakashu_ranking`という名前を付ける。
+*   **決定の理由:** MCPにおいて、データベースのクエリやファイルの操作、計算などのアクションを実行できるのは**Tool**である。Resourceは主に静的なデータを提供する（副作用がない）用途に特化しているため、今回の要件にはToolが最適である。
 
-  * **決定**: ツール（`tools/call`）の応答内の `structuredContent` に、画像ファイルを **Base64 エンコードした文字列**としてMIMEタイプと共**に含める**。
-  * **背景**: サーバー(Node A)のローカル画像ファイルを、リモートのクライアント(Node B)で表示させる必要があります。
-  * **合理的根拠**:
-    1.  **単一の応答**: この方法により、1回の `tools/call` 応答で、テキスト情報と画像情報の**両方**をクライアントに送信できます。
-    2.  **リモートアクセス**: `file:///` URIを `resource_link` で返す方法は、クライアントがリモートにあるため機能しません。
-    3.  **クライアント要件**: ユーザー要件（「LLMにこれを画像として表示するように設計します」）は、クライアントがBase64データ（または同等の埋め込みデータ）を解釈し、レンダリングできることを前提としています。
-  * **代替案（不採用）**: `Resources` 機能を実装し、`http://` で画像を提供するエンドポイントを立て、そのURLを `resource_link` で返す。
-  * **不採用理由**: `tools/call` のためだけに、`resources/read` やHTTP画像サーバーを別途実装するのは過剰な複雑化であり、単一のツール応答で完結する方がシンプルです。
+### ADR 004: 画像データの取り扱い
 
-### ADR-003: サーバーのトランスポート（通信方法）
+*   **コンテキスト:** クライアント（LLM）に対して画像ファイルを提示し、画像として表示させる必要がある。サーバー上のローカルファイル（`file://`スキーム）は、リモートクライアントからは直接アクセスできない。
+*   **決定:** 画像ファイルをサーバー側で読み込み、**Base64エンコード**し、**Image Content**タイプとしてToolの結果に埋め込む。
+*   **決定の理由:** Image ContentとしてBase64データを埋め込むことで、リモートのクライアントにファイルを確実に転送し、LLMクライアントに画像として表示させるという要件を直接満たすことができる。
 
-  * **決定**: **HTTP/SSE (Server-Sent Events)** をトランスポートとして使用する。`fastify` をWebサーバーとして利用し、`@modelcontextprotocol/sdk` の `HttpSseServerTransport` を組み込む。
-  * **背景**: サーバー (Node A) とクライアント (Node B) が異なるノードにあるため、`stdio`（標準入出力）トランスポートは使用できません。
-  * **合理的根拠**:
-    1.  **リモート通信**: HTTP/SSEは、リモートクライアントとの非同期通信（通知を含む）をサポートするMCPの標準トランスポートです。
-    2.  **エコシステム**: `fastify` は高性能なNode.jsウェブフレームワークであり、SDKの `HttpSseServerTransport` との連携が容易です。
-    3.  **必須パッケージ**: `fastify/cors` (クロスオリジン許可) と `fastify/sse` (SSEプロトコルサポート) が必要になります。
+---
 
------
+## 2. 大まかな設計の説明
 
-## 3\. 開発していくのに必要になる手順の説明
+'wakashu\_mcp\_server'は、リモートアクセス可能な単一のエンドポイントを提供する**Node.js/TypeScript**アプリケーションとして設計されます。
 
-1.  **環境構築**:
-      * Node.js (v18以降推奨) と npm (または yarn) を準備します。
-      * プロジェクトディレクトリを作成し、`npm init -y` を実行します。
-2.  **TypeScript初期化**:
-      * `npm install typescript ts-node @types/node --save-dev` を実行します。
-      * `npx tsc --init` を実行し、`tsconfig.json` を生成・編集します（`"module": "NodeNext"`, `"moduleResolution": "NodeNext"`, `"target": "ES2022"`, `"outDir": "./dist"` など）。
-3.  **依存関係のインストール**:
-      * MCP関連: `npm install @modelcontextprotocol/sdk zod`
-      * Webサーバー関連: `npm install fastify @fastify/cors @fastify/sse`
-      * 型定義: `npm install @types/mime-types --save-dev` (MIMEタイプ取得のため `mime-types` もインストール: `npm install mime-types`)
-4.  **ディレクトリ構成**:
-      * `src/` ディレクトリを作成し、以下のファイルを作成します。
-          * `constants.ts`: ファイルシステムのルートパスなど、定数を定義します。
-          * `schemas.ts`: `zod` を使用したツールの入力スキーマと、TypeScriptの型定義を記述します。
-          * `toolHandler.ts`: ファイルシステムを操作する中核ロジック（`getWakashuRanking` の実装）を記述します。
-          * `server.ts`: MCPサーバーのインスタンス化、`fastify` のセットアップ、トランスポートの接続を行うメインファイルです。
-5.  **コード実装**:
-      * `constants.ts` に `WAKASHU_ROOT_PATH` を定義します。
-      * `schemas.ts` に `getWakashuRankingSchema` (zodスキーマ) と、`WakashuRankingResult` (TypeScript型) を定義します。
-      * `toolHandler.ts` に、ファイル検索、JSONパース、画像Base64エンコード、エラーハンドリングを含む `handleGetWakashuRanking` 関数を実装します。
-      * `server.ts` に、`Server` を初期化し、`setToolHandler` で `toolHandler.ts` の関数とスキーマを登録し、`fastify` サーバーを起動します。
-6.  **`package.json` の編集**:
-      * `"type": "module"` を追加します（ES Modulesを使用するため）。
-      * `"scripts"` に `"start": "ts-node src/server.ts"` を追加します。
-7.  **テスト**:
-      * モックデータ（`第1回` ディレクトリなど）を `WAKASHU_ROOT_PATH` に配置します。
-      * `npm start` でサーバーを起動します。
-      * `curl` などのHTTPクライアントを使用して、`http://localhost:3000/mcp` エンドポイントにJSON-RPCリクエストを送信し、動作を確認します（詳細は「6. テストするときの手順の説明」にて）。
+### **ノード A (サーバー)**
 
------
+1.  **フレームワーク:** `@modelcontextprotocol/sdk` (コアMCP機能) と Express.js (HTTPインフラ)。
+2.  **データ構造:** `wakashu_dir`内の和歌集データ（JSONファイルと画像ファイル）を扱う。
+3.  **メイン機能:** `McpServer`インスタンスに**`get_wakashu_ranking`**という単一のToolを登録する。
+4.  **通信:** Expressによって公開される単一のHTTP POSTエンドポイント（`/mcp`）を通じて、クライアントからのMCPリクエスト（`tools/call`）を処理する。これはStreamable HTTP Transportのステートレスモードで実行される。
+5.  **データ処理層:** ユーザーの要求（ラウンド名、順位範囲）を検証し、ファイルパスを構築し、対象のJSONファイルをパースし、画像ファイルをBase64エンコードする専用のモジュール（`data-processor.ts`）を持つ。
 
-## 4\. 実装に向けた各ファイルごとの実際のコード
+### **ノード B (クライアント)**
 
-以下に、プロジェクトの完全なコードを示します。省略はありません。
+1.  **クライアント:** Claude Desktop。
+2.  **接続:** Claude Desktopの設定ファイル（`claude_desktop_config.json`）を通じて、ノードAの公開URL（例: `http://<Node_AのIP>:<PORT>/mcp`）にHTTP経由で接続される。
+3.  **利用:** LLMがユーザーの質問を解析し、適切な引数で`get_wakashu_ranking` Toolを呼び出す。
 
-### `package.json`
+---
 
+## 3. データ処理の流れの説明
+
+ユーザーが「'wakashu\_mcp\_server'で『遠慮したラップトップ和歌集』の第1回のランキング1位から3位の投稿を取得してください」というプロンプトをClaude Desktopに入力した場合の処理フローを説明します。
+
+1.  **ユーザー入力とLLMの意図決定 (ノード B):**
+    *   ユーザーがプロンプトを入力する。
+    *   Claude（LLM）は、このタスクを実行するために`wakashu_mcp_server`の**`get_wakashu_ranking`**ツールが必要であると判断する。
+    *   LLMは、引数として`{ "round_title": "第1回", "rank_range": "1-3" }`を構成する。
+2.  **MCP Tool Callリクエスト送信 (ノード B → ノード A):**
+    *   Claude Desktop内のMCPクライアントが、JSON-RPC形式の`tools/call`リクエストをノードAのHTTPエンドポイント（`/mcp`）に送信する。
+3.  **サーバー側のリクエスト受付とルーティング (ノード A):**
+    *   Expressサーバーがリクエストを受け取る。
+    *   `StreamableHTTPServerTransport`がリクエストボディを処理し、`McpServer`に接続する。
+    *   `McpServer`はリクエストが`get_wakashu_ranking`への呼び出しであることを識別し、登録されたハンドラを実行する。
+4.  **Toolハンドラによるデータ処理 (ノード A):**
+    *   **入力検証:** Zodスキーマに基づき、`round_title`と`rank_range`の形式が正しいか検証される。
+    *   **パス決定:** ハンドラはデータ処理モジュールを呼び出し、ルートディレクトリ(`/home/info-gather/wakashu_mcp_dir/wakashu_dir`)と引数から、対象の投稿順位（1, 2, 3位）に対応するディレクトリとファイルパスを決定する。
+    *   **存在チェックとエラーハンドリング:** 「第1回」ディレクトリが存在するか確認し、存在しない場合は「指定された回のデータは見つかりませんでした。」というエラーメッセージを生成する。
+    *   **データ取得ループ:** 順位1, 2, 3について以下の処理を繰り返す：
+        *   `1-Laptop`ディレクトリが存在するか確認。
+        *   `TextData1.json`を読み込み、和歌、Honka URL、Promptを抽出する。
+        *   `Picture1.png`（または他の拡張子）をバイナリとして読み込む。
+        *   画像をBase64エンコードする。
+        *   整形されたテキストデータとBase64エンコードされた画像データをMCPの`Content`オブジェクトとしてリストに追加する。
+5.  **Tool Callレスポンス構築と送信 (ノード A → ノード B):**
+    *   Toolハンドラは、集約された`Content`配列を含む**Tool Result**を返す。
+    *   `StreamableHTTPServerTransport`がTool ResultをJSON-RPC応答としてHTTPレスポンスに変換し、クライアントに返す。
+6.  **LLMによる結果の利用と表示 (ノード B):**
+    *   Claude Desktop内のクライアントがTool Resultを受け取る。
+    *   LLMはTool Result内のテキストと画像コンテンツを解析し、ユーザープロンプトに対する最終的な会話形式の回答を生成し、結果を画像として含めて表示する。
+
+---
+
+## 4. コードの品質を高くするためにした工夫の説明
+
+1.  **厳密な型定義とZodの活用:**
+    *   TypeScriptの型定義を厳密に適用し、特にToolの入力データ検証には**Zod**ライブラリを使用します。これにより、コンパイル時および実行時の両方でデータの一貫性を保ち、無効な入力データがアプリケーションロジックに到達するのを防ぎます。
+2.  **モジュール分割と関心事の分離 (SoC):**
+    *   MCPサーバーの定義/登録 (`server-tools.ts`)、データ処理とファイルI/O (`data-processor.ts`)、スキーマ定義 (`schemas.ts`)、およびHTTPサーバー起動 (`index.ts`) を明確に分離します。これにより、各モジュールが単一の責任を持ち、保守性とテスト容易性が大幅に向上します。
+3.  **非同期処理の徹底:**
+    *   ファイルシステム操作（`fs/promises`を使用）はすべて非同期 (`async/await`) で実行します。これにより、ファイルI/Oによるブロッキングを防ぎ、MCPサーバーが他のリクエストに対しても応答性を保つことができます。
+4.  **標準エラー出力の利用:**
+    *   MCPプロトコルでは標準入出力（`stdio`）が通信チャネルとして利用される場合がありますが、HTTPトランスポートを使用する場合でも、デバッグログやエラーログはプロトコル通信とは独立した**標準エラー出力（`console.error`）**に出力することを徹底します。これにより、サーバーの運用状態を正確に監視できます。
+5.  **ADRによる知識共有:**
+    *   本設計で策定したADRをソースコードと共に管理することで、設計の背景や代替案の検討結果をチーム全体で共有し、知識の属人化を防ぎます。
+
+---
+
+## 5. セキュリティと堅牢性の側面からコードに加えた工夫の説明
+
+### セキュリティの側面
+
+1.  **Tool入力のサニタイズと検証:**
+    *   Zodを使用して、ユーザーが指定するラウンド名や順位範囲が期待される形式（例: `^\d+-\d+$`）に厳密に適合することを強制します。これにより、意図しない文字列や不正なパス構成の試みなど、悪意のあるデータがサーバーに渡るのを防ぎます。
+2.  **ディレクトリトラバーサルの防止:**
+    *   ファイルパスを構築する際、ユーザー入力（`round_title`, `rank_range`）を直接ファイルシステムパスとして使用することを避け、`path.join()`を使用して常に絶対ルートパス（`/home/info-gather/wakashu_mcp_dir/wakashu_dir`）から相対パスを安全に結合します。ユーザー入力に`..`などの親ディレクトリ参照が含まれていても、データ処理モジュール内で安全なパスを強制的に構築し、機密性の高いシステムファイルへのアクセスを防止します。
+3.  **画像データのMIMEタイプ検証:**
+    *   読み込んだ画像ファイルについて、`MIME_TYPE_MAP`を通じて想定される拡張子とMIMEタイプのみを許可します。これにより、不正なMIMEタイプがクライアントに転送されることによるセキュリティリスクを軽減します。
+4.  **リモートアクセス時の保護 (DNS Rebinding):**
+    *   Streamable HTTP TransportはDNSリバインディング保護機能を提供しており、リモートデプロイメントの際には`enableDnsRebindingProtection: true`と`allowedHosts`を設定することで、クライアント側のセキュリティリスクを軽減すべきです。
+
+### 堅牢性の側面
+
+1.  **ファイルI/Oの例外処理:**
+    *   ファイルシステム操作を行う`data-processor.ts`内では、`try/catch`ブロックを使用し、ファイルが見つからない場合（`ENOENT`エラー）などの一般的なエラーを捕捉します。
+    *   **ユーザー要求エラーへの対応:** 存在しないラウンドや順位が要求された場合、MCP仕様に従い、`isError: true`と具体的なテキストメッセージ（例: 「指定された回のデータは見つかりませんでした。」）を含むTool Resultを返します。
+2.  **サーバープロセス保護:**
+    *   `index.ts`のメインプロセスでExpressおよびMCPリクエストの処理全体を`try/catch`で囲み、予期せぬ内部エラーが発生した場合でも、サーバープロセス全体がクラッシュすることなく、適切なJSON-RPC内部エラーコード（-32603）をクライアントに返すようにします。
+3.  **リクエストごとのトランスポート再生成:**
+    *   ステートレス運用（ADR 002）により、リクエストごとに新しい`StreamableHTTPServerTransport`を作成し、リクエストIDの衝突や状態の残留を防ぎ、サーバーの堅牢性を高めます。
+
+---
+
+## 6. 実装に向けた各ファイルごとの実際のコード (ノード A/B)
+
+### ノード A (サーバー)
+
+#### `package.json`
+
+コード省略
+
+#### `tsconfig.json`
+
+コード省略
+
+#### `src/schemas.ts`
+
+コード省略
+
+#### `src/data-processor.ts`
+
+コード省略
+
+#### `src/server-tools.ts`
+
+コード省略
+
+#### `src/index.ts` (メインエントリポイント)
+
+コード省略
+
+### ノード B (クライアント - Claude Desktopの設定)
+
+#### `claude_desktop_config.json` への追記 (設定例)
 ```json
 {
-  "name": "wakashu-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP Server for Enryo Laptop Wakashu",
-  "main": "dist/server.js",
-  "type": "module",
-  "scripts": {
-    "start": "ts-node src/server.ts",
-    "build": "tsc"
-  },
-  "keywords": [
-    "mcp",
-    "llm",
-    "ai"
-  ],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@fastify/cors": "^9.0.1",
-    "@fastify/sse": "^8.3.0",
-    "@modelcontextprotocol/sdk": "^0.1.0-alpha.29",
-    "fastify": "^4.27.0",
-    "mime-types": "^2.1.35",
-    "zod": "^3.23.8"
-  },
-  "devDependencies": {
-    "@types/mime-types": "^2.1.4",
-    "@types/node": "^20.12.12",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
-  }
-}
-```
-
-### `tsconfig.json`
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "baseUrl": "./",
-    "outDir": "./dist",
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "strict": true,
-    "skipLibCheck": true
-  },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
-}
-```
-
-### `src/constants.ts`
-
-```typescript
-import path from 'path';
-
-/**
- * 和歌集データが格納されているルートディレクトリの絶対パス。
- * ご提示いただいたパスに設定しています。
- */
-export const WAKASHU_ROOT_PATH = '/home/info-gather/wakashu_mcp_dir/wakashu_dir';
-
-/**
- * 画像ファイルとして認識する拡張子のリスト。
- */
-export const ALLOWED_IMAGE_EXTENSIONS = [
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.heic',
-  '.webp'
-];
-```
-
-### `src/schemas.ts`
-
-```typescript
-import { z } from 'zod';
-
-/**
- * getWakashuRanking ツールの入力スキーマ (zod)。
- * LLMはこのスキーマに基づいて引数を生成します。
- */
-export const getWakashuRankingSchema = {
-  name: 'getWakashuRanking',
-  description: '指定された「遠慮したラップトップ和歌集」の回と順位範囲に基づいて、ランキング情報を取得します。',
-  parameters: z.object({
-    roundName: z.string().describe('取得する和歌集の回。例: "第1回", "第2回"'),
-    startRank: z.number().int().min(1).describe('取得を開始する順位。例: 1'),
-    endRank: z.number().int().min(1).describe('取得を終了する順位。例: 3'),
-  }).refine(data => data.endRank >= data.startRank, {
-    message: '終了順位(endRank)は開始順位(startRank)以上である必要があります。',
-  }),
-};
-
-/**
- * getWakashuRanking ツールの出力スキーマ (JSON Schema)。
- * structuredContent の形式を定義します。
- */
-export const getWakashuRankingOutputSchema = {
-  type: 'object',
-  properties: {
-    rankings: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          rank: { type: 'number' },
-          accountName: { type: 'string' },
-          waka: { type: 'string' },
-          honkaLinks: {
-            type: 'array',
-            items: { type: 'string' }
-          },
-          imagePrompt: { type: 'string' },
-          imageData: {
-            type: 'object',
-            properties: {
-              data: {
-                type: 'string',
-                description: 'Base64 encoded image data'
-              },
-              mimeType: { type: 'string' }
-            },
-            required: ['data', 'mimeType']
-          }
-        },
-        required: ['rank', 'accountName', 'waka', 'honkaLinks', 'imagePrompt', 'imageData']
-      }
-    }
-  },
-  required: ['rankings']
-};
-
-/**
- * ツールハンドラが返す TypeScript の型定義 (内部用)。
- */
-export type WakashuRankingResult = {
-  rankings: Array<{
-    rank: number;
-    accountName: string;
-    waka: string;
-    honkaLinks: string[];
-    imagePrompt: string;
-    imageData: {
-      data: string;
-      mimeType: string;
-    };
-  }>;
-};
-
-/**
- * TextData*.json ファイルの中身の型定義。
- */
-export type TextDataJson = {
-  AccountName: string;
-  HonkadoriWaka: string;
-  Honka: string[];
-  Prompt: string;
-};
-```
-
-### `src/toolHandler.ts`
-
-```typescript
-import path from 'path';
-import { promises as fs } from 'fs';
-import mime from 'mime-types';
-import { WAKASHU_ROOT_PATH, ALLOWED_IMAGE_EXTENSIONS } from './constants.js';
-import type { TextDataJson, WakashuRankingResult } from './schemas.js';
-
-// カスタムエラーを定義
-export class RoundNotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'RoundNotFoundError';
-  }
-}
-
-export class RankNotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'RankNotFoundError';
-  }
-}
-
-/**
- * ファイルシステムを検索し、ランキングデータを取得する中核ロジック
- */
-export async function handleGetWakashuRanking(
-  params: { roundName: string; startRank: number; endRank: number }
-): Promise<WakashuRankingResult> {
-  
-  const { roundName, startRank, endRank } = params;
-  const roundPath = path.join(WAKASHU_ROOT_PATH, roundName);
-
-  // 0. パスの安全性を検証 (ルートディレクトリ外へのアクセスを防ぐ)
-  const resolvedRoundPath = path.resolve(roundPath);
-  const resolvedRootPath = path.resolve(WAKASHU_ROOT_PATH);
-  if (!resolvedRoundPath.startsWith(resolvedRootPath)) {
-    throw new Error('不正なパスが指定されました。');
-  }
-
-  // 1. 回 (例: 第1回) のディレクトリが存在するか確認
-  try {
-    await fs.stat(roundPath);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      throw new RoundNotFoundError(`指定された回のデータは見つかりませんでした。 (回: ${roundName})`);
-    }
-    throw error;
-  }
-
-  const results: WakashuRankingResult['rankings'] = [];
-  const allEntriesInRound = await fs.readdir(roundPath, { withFileTypes: true });
-
-  // 2. 指定された順位 (startRank から endRank) までループ
-  for (let rank = startRank; rank <= endRank; rank++) {
-    
-    // 3. 順位ディレクトリ (例: '1-Laptop') を探す
-    const rankDirPrefix = `${rank}-`;
-    const rankDirEntry = allEntriesInRound.find(
-      (entry) => entry.isDirectory() && entry.name.startsWith(rankDirPrefix)
-    );
-
-    if (!rankDirEntry) {
-      // 1件でも見つからなければエラーとする
-      throw new RankNotFoundError(`指定された順位の投稿はありません。 (順位: ${rank})`);
-    }
-
-    const entryPath = path.join(roundPath, rankDirEntry.name);
-    let entryFiles: string[];
-    try {
-      entryFiles = await fs.readdir(entryPath);
-    } catch (e) {
-      throw new RankNotFoundError(`順位ディレクトリの読み取りに失敗しました。 (パス: ${entryPath})`);
-    }
-
-    // 4. JSONファイル (例: 'TextData1.json') を探して読み込む
-    const jsonFileName = `TextData${rank}.json`;
-    const jsonFile = entryFiles.find(
-      (f) => f.toLowerCase() === jsonFileName.toLowerCase()
-    );
-
-    if (!jsonFile) {
-      throw new RankNotFoundError(`JSONファイルが見つかりません。 (ファイル名: ${jsonFileName})`);
-    }
-
-    const jsonPath = path.join(entryPath, jsonFile);
-    const jsonContent = await fs.readFile(jsonPath, 'utf-8');
-    const jsonData: TextDataJson = JSON.parse(jsonContent);
-
-    // 5. 画像ファイル (例: 'Picture1.png') を探して読み込む
-    const imgPrefix = `picture${rank}.`;
-    const imgFile = entryFiles.find(
-      (f) =>
-        f.toLowerCase().startsWith(imgPrefix) &&
-        ALLOWED_IMAGE_EXTENSIONS.includes(path.extname(f.toLowerCase()))
-    );
-
-    if (!imgFile) {
-      throw new RankNotFoundError(`画像ファイルが見つかりません。 (プレフィックス: ${imgPrefix})`);
-    }
-
-    const imgPath = path.join(entryPath, imgFile);
-    const mimeType = mime.lookup(imgPath) || 'application/octet-stream';
-    const imgData = await fs.readFile(imgPath);
-    const imgBase64 = imgData.toString('base64');
-
-    // 6. 結果を整形して配列に追加
-    results.push({
-      rank: rank,
-      accountName: jsonData.AccountName,
-      waka: jsonData.HonkadoriWaka,
-      honkaLinks: jsonData.Honka,
-      imagePrompt: jsonData.Prompt,
-      imageData: {
-        data: imgBase64,
-        mimeType: mimeType,
-      },
-    });
-  }
-
-  // 7. 最終結果を返す
-  if (results.length === 0) {
-      // ループが一度も実行されなかった場合 (例: 10位から12位の指定)
-      throw new RankNotFoundError('指定された順位の投稿はありません。');
-  }
-
-  return { rankings: results };
-}
-```
-
-### `src/server.ts`
-
-```typescript
-import { Server } from '@modelcontextprotocol/sdk/server';
-import { HttpSseServerTransport } from '@modelcontextprotocol/sdk/server/http-sse';
-import Fastify from 'fastify';
-import fastifySse from '@fastify/sse';
-import fastifyCors from '@fastify/cors';
-import {
-  getWakashuRankingSchema,
-  getWakashuRankingOutputSchema,
-} from './schemas.js';
-import {
-  handleGetWakashuRanking,
-  RoundNotFoundError,
-  RankNotFoundError,
-} from './toolHandler.js';
-
-// サーバーのポート
-const PORT = 3000;
-
-async function main() {
-  // 1. MCPサーバーのインスタンスを作成
-  const mcpServer = new Server(
-    {
-      name: 'wakashu_mcp_server',
-      version: '1.0.0',
-      displayName: '遠慮したラップトップ和歌集サーバー',
-    },
-    {
-      // 2. ツール機能 (capabilities) を宣言
-      capabilities: {
-        tools: {
-          // listChanged: false (ツールが動的に変わることはないため)
-        },
-      },
-    }
-  );
-
-  // 3. ツールをサーバーに登録
-  mcpServer.setToolHandler(
-    getWakashuRankingSchema, // 入力スキーマ (zod)
-    async (params) => {
-      try {
-        // 4. ハンドラ関数を呼び出し
-        const result = await handleGetWakashuRanking(params);
-        
-        // 5. 成功時の応答 (structuredContent を使用)
-        return {
-          structuredContent: result,
-          // 互換性のために簡単なテキストも添える
-          content: [
-            {
-              type: 'text',
-              text: `和歌集「${params.roundName}」の ${params.startRank}位から${params.endRank}位 の情報を取得しました。`,
-            },
-          ],
-        };
-      } catch (error) {
-        // 6. エラーハンドリング
-        console.error('Tool execution error:', error);
-
-        // ユーザーに提示するエラーメッセージを生成
-        let errorMessage = 'サーバー内部でエラーが発生しました。';
-        let errorCode = -32000; // General server error
-
-        if (error instanceof RoundNotFoundError) {
-          errorMessage = error.message;
-          errorCode = -32001; // Custom error code for "Round Not Found"
-        } else if (error instanceof RankNotFoundError) {
-          errorMessage = error.message;
-          errorCode = -32002; // Custom error code for "Rank Not Found"
+    // 他の設定...
+    "mcpServers": {
+        // wakashu_mcp_server の定義
+        "wakashu_mcp_server": {
+            "type": "http",
+            // Node A の開発サーバーのアクセス可能なURLを指定
+            "url": "http://<Node_AのIPアドレス>:<PORT>/mcp"
         }
-
-        // MCP仕様に沿ったTool Execution Errorをスローする
-        throw {
-          code: errorCode,
-          message: errorMessage,
-        };
-      }
-    },
-    {
-      // 7. 出力スキーマ (JSON Schema) を登録
-      outputSchema: getWakashuRankingOutputSchema,
     }
-  );
-
-  // 8. Webサーバー (Fastify) のセットアップ
-  const fastify = Fastify({
-    logger: true, // 開発中はログを有効化
-  });
-
-  // 9. 必要なプラグインを登録
-  await fastify.register(fastifyCors, {
-    // すべてのオリジンを許可 (開発用)
-    // 本番環境では 'claude desktop' のオリジンに限定することを推奨
-    origin: '*', 
-  });
-  await fastify.register(fastifySse);
-
-  // 10. MCPトランスポートを作成
-  const transport = HttpSseServerTransport.create(mcpServer);
-
-  // 11. /mcp エンドポイントを定義
-  // (GETはSSE接続用, POSTは通常のRPCコール用)
-  fastify.all('/mcp', async (request, reply) => {
-    try {
-      await transport.handle(request.raw, reply.raw);
-    } catch (error) {
-      fastify.log.error(error, 'Error handling MCP request');
-      if (!reply.raw.headersSent) {
-        reply.raw.statusCode = 500;
-        reply.raw.end('Internal Server Error');
-      }
-    }
-  });
-
-  // 12. Fastify サーバーを起動
-  try {
-    await fastify.listen({ port: PORT, host: '0.0.0.0' });
-    console.log(`MCP Server 'wakashu_mcp_server' listening on http://0.0.0.0:${PORT}/mcp`);
-  } catch (err) {
-    fastify.log.error(err);
-    process.exit(1);
-  }
+    // 他の設定...
 }
-
-main();
 ```
 
------
+---
 
-## 5\. コードの品質を高くするためにした工夫の説明
+## 7. 開発を進めていくのに必要になる手順の説明 (ノード A/B)
 
-1.  **関心の分離 (Separation of Concerns)**:
-      * `server.ts`: MCPサーバーの定義、HTTPトランスポートの接続、RPCの受付・応答のみを担当します。
-      * `toolHandler.ts`: 実際のビジネスロジック（ファイルシステムの操作）を完全にカプセル化しています。
-      * `schemas.ts`: データの「型」と「スキーマ」をすべて一箇所で管理し、`server` と `toolHandler` の両方から参照できるようにしています。
-      * `constants.ts`: ルートパスや拡張子リストなどの「マジックナンバー」を定数として分離し、将来の変更を容易にしています。
-2.  **堅牢なエラーハンドリング**:
-      * `toolHandler.ts` で `RoundNotFoundError` と `RankNotFoundError` というカスタムエラークラスを定義しました。
-      * `server.ts` の `setToolHandler` 内の `try...catch` ブロックでこれらのエラーを捕捉し、ユーザーの要求（「～見つかりませんでした」）に沿った、分かりやすいエラーメッセージとカスタムエラーコードを持つJSON-RPCエラーをクライアントに返却するようにしています。
-3.  **非同期処理の徹底**:
-      * ファイルシステムの操作にはすべて `fs.promises` を使用し、Node.jsのイベントループをブロックしない非同期コード（`async/await`）で統一しています。
-4.  **型の安全性 (Type Safety)**:
-      * TypeScriptを全面的に採用し、`TextDataJson` や `WakashuRankingResult` などの型を定義することで、`TextData1.json` の中身と、ツールが返すデータの整合性をコンパイル時にチェックできるようにしています。
-5.  **セキュリティへの配慮**:
-      * `toolHandler.ts` 内で `path.resolve` を使い、ユーザー（LLM）から提供された `roundName` が、意図した `WAKASHU_ROOT_PATH` の外部（例: `../../etc/passwd`）を指していないか検証する、基本的なパストラバーサル対策を加えています。
-6.  **明確なスキーマ定義**:
-      * `zod` を使用して、`startRank` が1以上であることや、`endRank` が `startRank` 以上であることなど、入力パラメータに対する詳細なバリデーションルールをスキーマレベルで定義しています。
+### ノード A (サーバー開発・デプロイ手順)
 
------
+1.  **環境構築:** Node.js, npm, TypeScriptをインストールし、`package.json`および`tsconfig.json`を設定する。
+2.  **データ構造準備:** テスト用の和歌集データディレクトリ（`/home/info-gather/wakashu_mcp_dir/wakashu_dir/第1回/...`）をローカル環境に準備し、`TextDataN.json`と画像ファイル（.png, .jpgなど）を配置する。
+3.  **データ処理層実装:** `src/data-processor.ts`を実装し、ファイルI/O、Base64エンコード、エラー処理ロジックを完成させる。
+4.  **スキーマとツール実装:** `src/schemas.ts`でZodスキーマを定義し、`src/server-tools.ts`で`get_wakashu_ranking`ツールのハンドラロジックを実装する。
+5.  **メインサーバー実装:** `src/index.ts`でExpressとStreamable HTTP Transportの接続ロジックを実装する。
+6.  **ビルド:** `npm run build`を実行し、JavaScriptバイナリを`build`ディレクトリに生成する。
+7.  **デプロイ:** Node A (開発サーバー) 上で、必要な依存関係をインストールし、サーバーを起動する (`npm start`)。ポートが外部からアクセス可能であることを確認する。
 
-## 6\. テストするときの手順の説明
+### ノード B (クライアント設定手順)
 
-このサーバーをテストするには、`claude desktop` を接続する前に、`curl` などのHTTPクライアントを使ってMCPのエンドポイント（`/mcp`）に直接JSON-RPCリクエストを送信するのが確実です。
+1.  **Claude Desktopインストール:** Claude Desktopをインストールし、最新バージョンであることを確認する。
+2.  **設定ファイル編集:** メニューから設定画面を開き、`claude_desktop_config.json`ファイルを編集する。
+3.  **サーバー情報登録:** ノードAで起動したMCPサーバーのHTTP URLを参照する設定を`mcpServers`キーに追加する。
+4.  **クライアント再起動:** Claude Desktopを再起動し、設定変更を反映させる。
+5.  **ツール確認:** チャット画面の🔨アイコンをクリックし、`wakashu_mcp_server`の提供する**「和歌集ランキング情報取得」**ツールがリストされていることを確認する。
 
-### 準備
+---
 
-1.  **モックデータの配置**:
+## 8. テスト項目と実施方法 (ノード A/B)
 
-      * `/home/info-gather/wakashu_mcp_dir/wakashu_dir` ディレクトリを作成します。
-      * その中に、ご提示いただいた通りのファイル構造（`第1回/1-Laptop/Picture1.png`, `第1回/1-Laptop/TextData1.json` など）を配置します。`TextData1.json` の中身も例の通りに設定してください。
+### ノード A (サーバー側 - ユニット/統合テスト)
 
-2.  **サーバーの起動**:
+| No. | テスト項目 | 実施方法 | 目的と詳細 |
+| :--- | :--- | :--- | :--- |
+| 8.1 | 正常系データ取得とエンコード | `fetchWakashuEntry("第1回", 1, "1-Laptop")` (モックファイルシステムまたはVitest/InMemoryTransport使用) | JSONのパース、Honka URLの抽出、画像ファイルのBase64エンコード が正しく行われ、正しいMIMEタイプが付与されていることを確認。 |
+| 8.2 | 順位ディレクトリのリスト取得 | `getRankedDirectories("第2回")` | `N-Name`形式のディレクトリが順位順に正しくソートされて返されることを確認。 |
+| 8.3 | 存在しないラウンドのエラー | `get_wakashu_ranking`に`round_title: "第99回"`を入力 (統合テスト) | Tool Resultとして**`isError: true`**が返され、`content`に「指定された回のデータは見つかりませんでした。」というテキストが含まれることを確認。 |
+| 8.4 | 範囲外順位の要求 | `get_wakashu_ranking`に`round_title: "第1回"`, `rank_range: "5-6"` (データは3位までを想定) を入力 | 4位以降の要求に対して、`content`に「指定された順位の投稿はありません。」というテキストが含まれることを確認。 |
+| 8.5 | 不正な入力スキーマ検証 | `get_wakashu_ranking`に`rank_range: "1,3"`など、Zodスキーマに違反する形式を入力 | JSON-RPCプロトコルエラー（無効な引数など）またはTool Execution Errorとして、エラーメッセージが返されることを確認。 |
 
-      * ターミナルで `npm install` を実行（初回のみ）。
-      * `npm start` を実行します。
-      * `MCP Server 'wakashu_mcp_server' listening on http://0.0.0.0:3000/mcp` と表示されれば成功です。
+### ノード B (クライアント側 - E2Eテスト)
 
-### テストケース
+| No. | テスト項目 | 実施方法 | 目的と詳細 |
+| :--- | :--- | :--- | :--- |
+| 8.6 | ツール一覧表示 | Claude Desktop起動後、🔨アイコンをクリック | ノードAのサーバーが稼働しており、ClaudeがHTTP経由で`tools/list`にアクセスし、`和歌集ランキング情報取得`ツールを正しく認識していることを確認。 |
+| 8.7 | 正常なツール呼び出しと表示 | Claudeに対し、「遠慮したラップトップ和歌集の第1回のランキング1位と2位の情報を取得して」と指示 | Claudeが`get_wakashu_ranking`を呼び出し、結果としてテキスト情報と**Base64で埋め込まれた画像**の両方がユーザーインターフェースに正しく表示されることを確認。 |
+| 8.8 | エラーメッセージの確認 | Claudeに対し、「遠慮したラップトップ和歌集の第99回のランキング情報を取得して」と指示 | Tool Execution Errorの結果として、LLMが「指定された回のデータは見つかりませんでした。」といったエラー応答を生成することを確認。 |
+| 8.9 | URLの検証 | 取得された投稿内のHonka URLが、ブラウザで正しく開けるかを確認 | `TextDataN.json`からのURLが正確に抽出されていることを確認。 |
 
-(別のターミナルを開いて、以下の `curl` コマンドを実行します)
+---
 
-**テストケース1: `tools/list` (ツールの定義を取得)**
+## 9. すべてのテスト項目をクリアした後のその他の手順 (具体的にお願いします)
 
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  http://localhost:3000/mcp
-```
+1.  **最終的なセキュリティチェックリストの実行:**
+    *   Node.jsのバージョンが最新かつサポートされているか確認する。
+    *   外部に公開されているHTTPエンドポイント（`/mcp`）以外のエンドポイントが意図せず公開されていないことを確認する。
+    *   リモートサーバーとして運用する場合、`src/index.ts`内の**DNSリバインディング保護** (`enableDnsRebindingProtection: true`) が本番環境の設定（`allowedHosts`）で有効になっていることを最終的に確認し、実装する。
+2.  **パフォーマンス基準の確立と計測:**
+    *   サーバー起動後、想定される最大負荷時（例：クライアント10台からの同時リクエスト）において、ツールの平均応答時間（レイテンシ）とエラー率を計測し、サービスレベル目標（SLO）を満たしているか確認する。
+3.  **ADRのステータス更新:**
+    *   実装とテストが完了し、設計上の決定が有効であることが確認できたため、ADR 001から004までのすべてのステータスを「承認 (Approved)」に更新し、文書を確定する。
+4.  **本番環境への移行:**
+    *   開発サーバー（ノードA）から、本番運用を意図した環境へMCPサーバーを移行し、永続的なサービスとして起動する（例: systemdサービス登録、Dockerコンテナ化、ロードバランサへの登録など）。
+5.  **ドキュメント公開とクライアントへの周知:**
+    *   MCPサーバーのドキュメント（提供ツール、引数、URL）を正式に公開し、クライアント（Claude Desktopユーザー）に対して、接続設定（`claude_desktop_config.json`の記載内容）を周知する。サーバー名の変更可能性（「遠慮したラップトップ和歌集」など）についても事前に通知する。
 
-  * **期待する応答**: `getWakashuRanking` ツールの定義（`name`, `description`, `parameters` スキーマ）を含むJSON-RPC応答が返ってきます。
+---
 
-**テストケース2: `tools/call` (正常系: 1位～2位取得)**
+## 10. 1から9までの項目では伝えきれなかったその他の情報についての補足
 
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"getWakashuRanking","arguments":{"roundName":"第1回","startRank":1,"endRank":2}}}' \
-  http://localhost:3000/mcp
-```
+### 将来的な拡張性（編纂時期の考慮）
 
-  * **期待する応答**: `result.structuredContent.rankings` 配列に、1位と2位のデータ（`accountName`, `waka`, `honkaLinks`, `imagePrompt`、そして `imageData.data` に長いBase64文字列）が含まれるJSON-RPC応答が返ってきます。
+和歌集の編纂時期（`編纂時期.json`）に基づいた情報取得は、今回の機能実装には直接関係ありませんが、将来的な拡張を見越して設計を進めています。この機能を実現するためには、Toolではなく、**Resource Template**の仕組みを利用することが適切です。
 
-**テストケース3: `tools/call` (エラー系: 回が見つからない)**
+1.  **Resource Templateの定義:** `McpServer`に、以下のようなURIテンプレートを登録します。
+    *   例: `wakashu://rounds/by-date/{start_date}/{end_date}`
+2.  **Resource Handlerの実装:** このテンプレートに対する`resources/read`リクエスト が来た際、`編纂時期.json`を読み込み、指定された期間（`start_date`から`end_date`）に該当する回次（例: 第1回、第2回）をリストし、それらの回次に関するResource Linksを返すように設計します。Resourceは「計算を伴わずデータを提示する」という特性を持つため、日付に基づくフィルタリング結果の提示に適しています。
 
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"getWakashuRanking","arguments":{"roundName":"第99回","startRank":1,"endRank":1}}}' \
-  http://localhost:3000/mcp
-```
+### サーバー名の変更可能性に関するプロトコル上の考慮
 
-  * **期待する応答**: `error` オブジェクトを含み、`error.message` が "指定された回のデータは見つかりませんでした。 (回: 第99回)" となっているJSON-RPC応答が返ってきます。
+MCPサーバー名である`wakashu_mcp_server`は変更しないと決定されていますが、このサーバーが扱う「和歌集」のタイトル（例: 「遠慮したラップトップ和歌集」）は変更される可能性があります。
 
-**テストケース4: `tools/call` (エラー系: 順位が見つからない)**
+このタイトルは、MCPサーバーの**ToolやResourceのタイトル** (`title`フィールド) や、その**説明** (`description`フィールド) に使用されるべきです。もしタイトルが変更された場合、サーバー側の該当するメタデータを更新し、クライアントが次に`tools/list`リクエストを送信した際に、更新された情報（`title`や`description`）を取得できるようにする必要があります。これにより、LLMは最新の和歌集の名称を認識し、ユーザーとの会話に反映できます。
 
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"getWakashuRanking","arguments":{"roundName":"第1回","startRank":10,"endRank":12}}}' \
-  http://localhost:3000/mcp
-```
 
-  * **期待する応答**: `error` オブジェクトを含み、`error.message` が "指定された順位の投稿はありません。 (順位: 10)" となっているJSON-RPC応答が返ってきます。
 
-**テストケース5: 統合テスト**
-これらの `curl` テストが成功した後、`claude desktop` を起動し、`http://localhost:3000/mcp` をサーバーとして接続し、ご提示いただいたプロンプトを送信します。`claude desktop` が `getWakashuRanking` ツールを呼び出し、Base64データを画像としてレンダリングできれば、すべての実装が成功です。
