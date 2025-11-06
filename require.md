@@ -22,8 +22,6 @@ MCPクライアント(LLMサービス):
 >
 > [https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv\_dp\_share\_cu\_r](https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv_dp_share_cu_r)
 >
-> ジャケット生成に使ったプロンプト
-> 「横を向いたカマキリのイラストを描いてください！」
 >
 > 2位：@Wakashuさん
 >
@@ -33,8 +31,6 @@ MCPクライアント(LLMサービス):
 >
 > [https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv\_dp\_share\_cu\_r](https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv_dp_share_cu_r)
 >
-> ジャケット生成に使ったプロンプト
-> 「デフォルメされたロボットらしいロボットの座っているイラストを描いてくれる？」
 
 -----
 
@@ -82,8 +78,7 @@ MCPクライアント(LLMサービス):
   "Honka": [
     "https://www.youtube.com/watch?v=8OZDgBmehbA",
     "https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv_dp_share_cu_r"
-  ],
-  "Prompt": "「横を向いたカマキリのイラストを描いてください！」"
+  ]
 }
 ```
 
@@ -99,8 +94,7 @@ MCPクライアント(LLMサービス):
   "HonkadoriWaka": "\"'Winny'(2023)の作中、47氏は「ご飯3原則」を語っている。いわく「その１、熱くない。その２、辛くない。その３、食べにくくない。」あくまで推測の域を出ないけれど、これは「ロボット３原則」をオマージュした発言なのではないかと思う。工学出身の47氏だからあまり違和感はないし、47氏らしい感性だなと思う。\"",
   "Honka": [
     "https://www.amazon.co.jp/gp/video/detail/B0CH9YSQ55/ref=atv_dp_share_cu_r"
-  ],
-  "Prompt": "「デフォルメされたロボットらしいロボットの座っているイラストを描いてくれる？」"
+  ]
 }
 ```
 
