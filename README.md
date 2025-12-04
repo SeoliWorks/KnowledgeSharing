@@ -1,355 +1,200 @@
---------------------------------------------------------------------------------------------------------
 
-自分:
-
-これから'wakashu_mcp_server'の設計やそれを実装するコードを具体的に考えていきましょう。
-
-考えがまとまり次第、
-
-> 1. 実装にあたってのADR(Architecture Decision Record)(必要な分だけ項目を作ってかまいません)
-
-> 2. 大まかな設計の説明
-
-> 3. データ処理の流れの説明
-
-> 4. コードの品質を高くするためにした工夫の説明
-
-> 5. セキュリティと堅牢性の側面からコードに加えた工夫の説明
-
-> 6. 実装に向けた各ファイルごとの実際のコード(各ノードごとに項目を分けてください)(省略は一切しないように心掛けてください)
-
-> 7. 開発を進めていくのに必要になる手順の説明(各ノードごとに項目を分けてください)
-
-> 8. テスト項目と実施方法(各ノードごとに項目を分けてください)
-
-> 9. すべてのテスト項目をクリアした後のその他の手順(具体的にお願いします)
-
-> 10.  1から9までの項目では伝えきれなかったその他の情報についての補足
-
-の10個を提示してください。
-
-段階的に考えていきましょうね。
-
-> ※機能要件は'require.md'に
-
------------------------------------------------------------------------------------------------------------------------------------------------------
-
-NotebookLM:
-
-> Fix_in_advance.mdの修正を反映させた**arc**
-
-承知いたしました。「'wakashu\_mcp\_server'」の設計と実装計画について、ご提示いただいた10個の項目に沿って、詳細かつ具体的に検討を進めます。本サーバーは、Model Context Protocol (MCP) を利用し、TypeScriptの公式SDK（`@modelcontextprotocol/sdk`）を用いて、リモート環境での和歌集データ検索機能を提供します。
-
-## 'wakashu\_mcp\_server' 設計・実装計画
-
-### 1. 実装にあたってのADR (Architecture Decision Record)
-
-本プロジェクトの主要な設計決定を、ADR（Architecture Decision Record）として記録します。ADRの構成要素は、一般的なMCPサーバー開発における標準的な項目と、MADR（Markdown Architecture Decision Records）で推奨されるセクション（考慮した選択肢、決定の基準など）に基づきます。
-
-| ADR ID | タイトル | ステータス |
-| :--- | :--- | :--- |
-| ADR-001 | MCPサーバーフレームワークの選定 | Approved |
-| ADR-002 | トランスポート（通信手段）の選定 | Approved |
-| ADR-003 | メイン機能の実装形式（Toolの採用） | Approved |
-| ADR-004 | データ処理におけるエラーハンドリング戦略 | Approved |
-
-#### ADR-001: MCPサーバーフレームワークの選定
-
-*   **コンテキスト:** 和歌集情報検索システムをTypeScriptで構築するにあたり、MCP仕様に厳密に準拠しつつ、将来的な拡張性を持つサーバー基盤を選択する必要がある。
-*   **決定の基準:**
-    1.  MCP公式仕様への準拠度。
-    2.  TypeScript環境での安定性。
-    3.  リモートデプロイのサポート。
-*   **考慮した選択肢:**
-    *   **A. `@modelcontextprotocol/sdk`:** 公式のコア実装。最大制御（Maximum Control）と厳密な仕様準拠に優れる。
-    *   **B. `mcp-framework` / `fastmcp`:** 開発者体験(DX)に優れるが、本プロジェクトではコア機能の理解と制御を優先。
-*   **決定:** **`@modelcontextprotocol/sdk`** を採用する。
-*   **決定の理由:** 公式SDKはMCP仕様の全機能に対する厳密なサポートと、将来的なプロトコル変更への柔軟な対応を可能にするため。
-
-#### ADR-002: トランスポート（通信手段）の選定
-
-*   **コンテキスト:** MCPサーバー（ノードA）が開発者のサーバーに置かれ、MCPクライアント（ノードB）が別のユーザーPCで動作するため、リモート通信が必要である。
-*   **決定の基準:**
-    1.  リモートアクセス（HTTPベース）のサポート。
-    2.  最新のMCPプロトコル準拠。
-    3.  クライアント（Claude Desktop）との互換性。
-*   **考慮した選択肢:**
-    *   **A. Streamable HTTP Transport:** 最新の推奨されるリモート通信方式。
-    *   **B. stdio Transport:** ローカル統合に適しており、リモート環境では使用不可。
-    *   **C. Legacy SSE Transport:** 非推奨（Deprecated）であり、Streamable HTTPへの移行が推奨されている。
-*   **決定:** **Streamable HTTP Transport** を採用し、ExpressなどのHTTPサーバーと組み合わせて実装する。
-*   **決定の理由:** リモート環境での接続を可能にし、セッション管理（今回の要件では不要だが、汎用性のため Stateless モードを使用）およびストリーミング通知に対応している。
-
-#### ADR-003: メイン機能の実装形式（Toolの採用）
-
-*   **コンテキスト:** ユーザープロンプト（例：「第1回の1位から3位の投稿を取得して」）に応じて、動的にファイルシステムにアクセスし、データを抽出・整形して返す必要がある。
-*   **決定の基準:**
-    1.  モデル制御（LLMが引数を決定し、呼び出しを判断する）に適していること。
-    2.  外部I/O（ファイル読み取り）およびデータ整形という「アクション」を伴うこと。
-*   **考慮した選択肢:**
-    *   **A. Tool:** LLMによって制御される、計算や外部システム連携といったアクションに適した機能。
-    *   **B. Resource/Resource Template:** アプリケーション駆動で利用される静的またはパラメータ化されたデータ提供に適した機能。
-*   **決定:** **`search_wakashu_ranking`** という名前の**Tool**を定義し、メインの情報検索機能を実装する。
-*   **決定の理由:** ユーザーの具体的な要求（回数、順位範囲）に基づいて動的な処理（ファイル検索、データ抽出、画像Base64エンコード）を実行するため、Model-controlledであるToolが最も適切である。
-
-#### ADR-004: データ処理におけるエラーハンドリング戦略
-
-*   **コンテキスト:** ユーザーが物理的に存在しないデータ（例: 第99回, 10位）を要求した場合、LLMが理解できる形でエラー応答を返す必要がある。
-*   **決定の基準:**
-    1.  要求されたデータがない場合を明確にクライアントに伝える。
-    2.  MCPのToolエラーメカニズムに準拠する。
-*   **決定:**
-    1.  ファイルシステム操作やパス解決に失敗し、要求されたデータが見つからない場合は、Toolの結果に `isError: true` を設定し、ユーザーに表示すべきテキストメッセージを `content` に含める。
-    2.  プロトコルレベルのエラー（例: 入力スキーマ違反）はJSON-RPCエラー（`-32602`など）として返す。
-*   **決定の理由:** `isError: true`は、API失敗やビジネスロジックエラーを報告するためのTool固有のメカニズムであり、LLMがユーザーに「指定された回のデータは見つかりませんでした」といった適切なフィードバックを生成するために役立つ。
-
----
-
-### 2. 大まかな設計の説明
-
-`wakashu_mcp_server`は、TypeScriptと`@modelcontextprotocol/sdk`を用いて構築されたステートレスなMCPサーバーです。
-
-#### 構成要素
-
-1.  **MCP Server (`McpServer`):** コアプロトコルハンドリングとTool/Resourceの登録を担います。
-2.  **Transport (`StreamableHTTPServerTransport`):** リモート接続を可能にする通信層であり、ExpressのPOSTエンドポイントに接続されます。今回はリクエストごとに新しいトランスポートを作成するステートレスモードを採用し、リクエストIDの衝突を防ぎます。
-3.  **Tool (`search_wakashu_ranking`):** ユーザーの要求（回数、順位範囲）を受け取り、ファイルシステムからデータを読み出し、結果を整形して返します。
-4.  **データ処理ロジック:** ノードAのローカルファイルパス(`/home/info-gather/wakashu_mcp_dir/wakashu_dir`)を基に、要求された回と順位に対応するJSONと画像ファイルを検索し、処理します。
-
-#### 処理するエンティティ
-
-| エンティティ | 種類 | 目的 |
-| :--- | :--- | :--- |
-| `search_wakashu_ranking` | Tool | 動的なランキング情報の取得と画像データの埋め込み。 |
-| 和歌集データ | Resource Contents | 取得した画像ファイルやJSONデータを、Base64エンコードされたバイナリコンテンツ (`type: 'image'`) やテキストコンテンツ (`type: 'text'`) としてTool結果に含めて返します。 |
-
-#### 画像処理の設計
-
-MCPは画像コンテンツをBase64エンコードされたバイナリデータとしてToolの結果に含めることができます。サーバーは指定された順位のディレクトリ内の画像ファイル（`.png`, `.jpg`, `.jpeg`, `.heic`, `.webp`など、複数形式に対応が必要） を読み込み、Base64エンコードし、適切なMIMEタイプを付与してクライアントに返します。これにより、Claude Desktop（ホスト）はこれを画像として表示できるようになります。
-
----
-
-### 3. データ処理の流れの説明
-
-ユーザーが「'wakashu\_mcp\_server'で「遠慮したラップトップ和歌集」の第1回のランキング1位から3位の投稿を取得してください」とプロンプトを入力した場合のデータ処理フローは以下の通りです。
-
-1.  **Toolの引数抽出とJSON-RPC送信 (ノードB → ノードA):**
-    *   Claude Desktop内のLLMが、ユーザーのプロンプトを分析し、登録されている`search_wakashu_ranking`ツールを利用すると判断します。
-    *   LLMは、引数 `{ round: '第1回', startRank: 1, endRank: 3 }` を生成し、Streamable HTTPトランスポートを通じて、MCPサーバーの`/mcp`エンドポイントに`tools/call` JSON-RPCリクエストをPOSTします。
-2.  **リクエストの受信とトランスポート接続 (ノードA):**
-    *   Expressサーバーがリクエストを受信し、リクエスト専用の`StreamableHTTPServerTransport`インスタンスを作成します。
-    *   `McpServer`がこのトランスポートに接続され、リクエストを処理します。
-3.  **入力バリデーション (ノードA):**
-    *   Toolハンドラは、受け取った引数（`round`, `startRank`, `endRank`）をZodスキーマに照らして検証します。
-4.  **データ検索とファイルパス構築 (ノードA):**
-    *   サーバーは、`/home/info-gather/wakashu_mcp_dir/wakashu_dir`をルートとして、要求された順位範囲（1位から3位）に対応するディレクトリを特定します。
-    *   例: 1位の場合、`第1回/1-Laptop/` フォルダを探します。
-5.  **ファイルI/Oとデータ抽出 (ノードA):**
-    *   順位ごとの投稿ディレクトリから、`TextDataX.json`と対応する画像ファイル（例: `PictureX.png`, `PictureX.jpg`など）を読み込みます。
-    *   `TextDataX.json`をパースし、アカウント名、和歌、本歌URL（複数可）を抽出します。
-    *   画像ファイルの内容をバイナリとして読み込み、Base64形式にエンコードし、MIMEタイプを決定します。
-6.  **エラー処理 (ノードA):**
-    *   指定された回や順位に対応するディレクトリやファイルが存在しない場合、Toolハンドラは、`{ content: [{ type: 'text', text: '指定された回のデータは見つかりませんでした。' }], isError: true }`を返します。
-7.  **Tool結果の構築と応答 (ノードA):**
-    *   読み込んだすべての情報を集約し、各順位の投稿ごとに、整形されたテキスト情報と、Base64エンコードされた画像コンテンツ（`Image Content`）を組み合わせた`ToolResult`オブジェクトを生成します。
-    *   この結果がJSON-RPCレスポンスとしてクライアントに返送されます。
-8.  **LLMによる最終応答生成 (ノードB):**
-    *   LLMはToolの結果を受け取り、そのデータ（テキストと画像）に基づいて、ユーザーに対して会話形式での最終的な回答を生成します。
-
----
-
-### 4. コードの品質を高くするためにした工夫の説明
-
-#### 1. 厳格な型定義とスキーマバリデーション
-*   **Zodによるスキーマ定義:** Toolの入力引数と、内部で読み込むJSONファイル（`TextDataX.json`など）の構造をZodで厳密に定義します。これにより、型安全性を高めるとともに、LLMからの入力が期待される形式であることを保証します。
-*   **TypeScriptの採用:** 言語レベルで型チェックを行い、実行時エラーのリスクを低減します。
-
-#### 2. 公式SDKの推奨パターンの適用
-*   `McpServer`クラスの使用や、推奨される `registerTool` メソッドを使用してToolを定義します。
-*   Toolの結果は、JSONオブジェクトとして`structuredContent`に含めるとともに、Text Contentとしてもシリアライズして返すことで、後方互換性（Backwards Compatibility）を確保します。
-
-#### 3. ロジックとI/Oの分離
-*   MCPサーバーの初期化、Transport接続といったプロトコル層の処理 (`server.ts`) と、ファイルシステムへのアクセス、データパース、ビジネスロジック (`wakashuTool.ts`内) を明確に分離します。これにより、ビジネスロジックのテストが容易になります。
-*   ファイルI/O操作は非同期処理として扱い、`fs/promises`モジュールを使用することで、コードの可読性を保ちます。
-
-#### 4. 可読性の高いエラー処理
-*   ファイルI/Oやデータパース中に発生するエラーは、適切なカスタム例外や、Toolのエラー結果 (`isError: true`) に変換し、デバッグを容易にし、ユーザーへのフィードバックを改善します。
-
----
-
-### 5. セキュリティと堅牢性の側面からコードに加えた工夫の説明
-
-#### 1. 入力バリデーションとサニタイズ (セキュリティ)
-*   **動的パラメータの検証:** `search_wakashu_ranking` Toolの入力（`round`, `startRank`, `endRank`）に対し、Zodスキーマを用いて、型や値の範囲（例: 順位は正の整数であること）を厳しくチェックします。
-*   **ディレクトリトラバーサル防止:** ユーザー入力（回数、順位）からファイルパスを構築する際、必ずルートディレクトリ (`/home/info-gather/wakashu_mcp_dir/wakashu_dir`) の内部に解決されることを確認します。入力値に`..`のような不正なシーケンスが含まれないように、ファイルパス解決時に厳格なパス結合（`path.resolve`とルートチェック）を実施します。これはMCPサーバーの必須セキュリティ対策の一つです。
-
-#### 2. リモート接続のセキュリティ (セキュリティ)
-*   **DNS Rebinding Protection:** Streamable HTTP Transportを使用する場合、特にローカル開発環境や特定のデプロイメントモデルでは、`enableDnsRebindingProtection: true`と`allowedHosts`の設定を導入し、DNSリバインディング攻撃を防止します。
-*   **CORS設定:** ブラウザベースのクライアントを将来的にサポートする場合に備え、`Mcp-Session-Id`ヘッダーを公開する適切なCORS設定を行います。
-
-#### 3. 堅牢なエラーレポート (堅牢性)
-*   **Tool Execution Errorの利用:** データが存在しないケースやファイル読み取り失敗は、`isError: true`フラグ付きの結果として返し、LLMに処理の失敗を明確に伝えます。
-*   **リソース解放:** ファイルI/Oや将来的なデータベース接続を行う場合、`finally`ブロックを使用してリソースを確実に解放する処理を記述します（SQLite Explorerの例参照）。
-
-#### 4. バイナリデータの適切な処理 (セキュリティ/堅牢性)
-*   画像ファイルを読み込む際、存在しないMIMEタイプや、想定外の大きなファイルサイズを弾くロジックを導入することで、サーバーリソースの枯渇や不正なデータ送信を防ぎます。
-*   Base64エンコードされたデータは、MCP仕様の要求に従い、正確なMIMEタイプを付与します。
-
----
-
-### 6. 実装に向けた各ファイルごとの実際のコード (省略は一切しないように心掛けてください)
-
-このサーバーはノードA（開発者のサーバー）上で動作し、Streamable HTTPトランスポートを使用してリモートクライアント（ノードBのClaude Desktop）と通信します。
-
-#### A. ノードA (MCPサーバー)
-
-**A-1. `package.json`**
-
-依存関係、スクリプト、およびエントリポイントを定義します。
-
-```json
-{
-  "name": "wakashu_mcp_server",
-  "version": "1.0.0",
-  "description": "MCP Server for Wakashu ranking retrieval",
-  "main": "build/server.js",
-  "type": "module",
-  "scripts": {
-    "build": "tsc",
-    "start": "node build/server.js",
-    "dev": "ts-node src/server.ts"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
-    "express": "latest",
-    "zod": "3"
-  },
-  "devDependencies": {
-    "@types/express": "latest",
-    "@types/node": "latest",
-    "ts-node": "latest",
-    "typescript": "latest"
-  }
+▷reactとNext.jsでなんらかのサービスを始めるとして、１番手軽に試せるサービスを考えてからそれを実装するソースコードを提供してほしいな
+
+▶ReactとNext.jsを使って、最も手軽に作れて、かつ「サービスとして成立している（誰かの役に立つ）」ものとして、\*\*「リアルタイムQRコード作成ツール」\*\*を提案します。
+
+### なぜこれがおすすめなのか？
+
+1.  **バックエンド不要:** データベースが不要で、ブラウザ上の計算だけで完結するため、実装が非常に簡単です。
+2.  **実用性が高い:** URL共有やWi-Fi接続用など、すぐに自分で使えます。
+3.  **拡張性:** 後から「ロゴ埋め込み」や「色変更」などの機能を追加しやすいです。
+
+-----
+
+### 実装ステップ
+
+まずはプロジェクトを作成し、必要なライブラリをインストールします。
+
+```bash
+npx create-next-app@latest qr-generator --typescript --tailwind --eslint
+cd qr-generator
+npm install qrcode.react lucide-react html-to-image
+```
+
+### ソースコード (Next.js App Router)
+
+以下は、ユーザビリティを考慮した完成版のコードです。
+
+**ファイル構成:**
+
+1.  `app/page.tsx` (メインページ)
+2.  `components/QRCodeGenerator.tsx` (機能コンポーネント)
+
+#### 1\. Components: `components/QRCodeGenerator.tsx`
+
+```tsx
+"use client";
+
+import React, { useState, useRef } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
+import { Download, Share2, Settings } from 'lucide-react';
+
+export default function QRCodeGenerator() {
+  const [url, setUrl] = useState('');
+  const [bgColor, setBgColor] = useState('#ffffff');
+  const [fgColor, setFgColor] = useState('#000000');
+  const [size, setSize] = useState(256);
+  const qrRef = useRef<HTMLDivElement>(null);
+
+  // ダウンロード機能
+  const downloadQRCode = () => {
+    const canvas = qrRef.current?.querySelector('canvas');
+    if (canvas) {
+      const pngUrl = canvas.toDataURL('image/png');
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pngUrl;
+      downloadLink.download = 'qrcode.png';
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+    }
+  };
+
+  return (
+    <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
+      <div className="text-center mb-8">
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">Quick QR Maker</h1>
+        <p className="text-gray-500 text-sm">URLを入力して即座にQRコードを生成</p>
+      </div>
+
+      {/* 入力エリア */}
+      <div className="space-y-4 mb-8">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">URL / テキスト</label>
+          <input
+            type="text"
+            placeholder="https://example.com"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
+          />
+        </div>
+
+        {/* カスタマイズ（簡易版） */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">背景色</label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="color"
+                value={bgColor}
+                onChange={(e) => setBgColor(e.target.value)}
+                className="h-8 w-8 rounded cursor-pointer border-0"
+              />
+              <span className="text-xs text-gray-400">{bgColor}</span>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">QR色</label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="color"
+                value={fgColor}
+                onChange={(e) => setFgColor(e.target.value)}
+                className="h-8 w-8 rounded cursor-pointer border-0"
+              />
+              <span className="text-xs text-gray-400">{fgColor}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* QR表示エリア */}
+      <div className="flex flex-col items-center justify-center bg-gray-50 p-6 rounded-xl border-2 border-dashed border-gray-200 mb-6">
+        {url ? (
+          <div ref={qrRef} className="shadow-sm">
+            <QRCodeCanvas
+              value={url}
+              size={size}
+              bgColor={bgColor}
+              fgColor={fgColor}
+              level={"H"} // 誤り訂正レベル高
+              includeMargin={true}
+            />
+          </div>
+        ) : (
+          <div className="h-64 w-64 flex items-center justify-center text-gray-300">
+            <span className="text-sm">ここにQRコードが表示されます</span>
+          </div>
+        )}
+      </div>
+
+      {/* アクションボタン */}
+      <button
+        onClick={downloadQRCode}
+        disabled={!url}
+        className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-all ${
+          url
+            ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-blue-500/30'
+            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+        }`}
+      >
+        <Download size={20} />
+        <span>PNGでダウンロード</span>
+      </button>
+    </div>
+  );
 }
 ```
 
-**A-2. `tsconfig.json`**
+#### 2\. Page: `app/page.tsx`
 
-TypeScriptのコンパイラオプションを定義します。
+```tsx
+import QRCodeGenerator from '@/components/QRCodeGenerator';
 
-> コード省略
+export default function Home() {
+  return (
+    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+      <QRCodeGenerator />
+      
+      <footer className="fixed bottom-4 text-center text-gray-400 text-xs">
+        <p>© 2025 Simple QR Service. Built with Next.js</p>
+      </footer>
+    </main>
+  );
+}
+```
 
-**A-3. `src/server.ts` (サーバーのエントリポイントとHTTP処理)**
+-----
 
-Expressサーバーのセットアップと、Streamable HTTP Transportとの連携を行います。
+### コード生成後の「レビューと改善」サイクル (3回実施)
 
-> コード省略
+ご指示に従い、生成したコードに対して自己レビューと改善を3段階で行いました。上記のコードはこれらを反映した最終結果です。
 
-**A-4. `src/wakashuTool.ts` (Tool定義とビジネスロジック)**
+#### 🔄 1回目：機能性のレビュー
 
-メインの検索Toolの実装と、ファイルI/O、データ変換ロジックを含みます。
+  * **課題:** 初期のコード案では、単にQRコードを表示するだけだった。ユーザーは「作ったQRコードを使いたい」はずであり、保存できないとサービスとしての価値が低い。
+  * **改善:** HTML Canvasから画像を生成してダウンロードする `downloadQRCode` 関数を追加しました。これにより「ツール」としての完結性が高まりました。
 
-> コード省略
+#### 🔄 2回目：UX（ユーザー体験）のレビュー
 
----
+  * **課題:** 入力欄が空のときに真っ白な画面や壊れた画像が表示される可能性があった。また、QRコードが小さすぎてスマホで読み取りにくい懸念があった。
+  * **改善:**
+      * URL未入力時の「プレースホルダー表示（ここにQRコードが表示されます）」を追加し、UIのガタつきを防止。
+      * `includeMargin={true}` を設定し、周囲に余白を持たせることで読み取り精度を向上。
+      * ダウンロードボタンを、URL未入力時は `disabled` (無効化) にして誤操作を防ぐように変更。
 
-### 7. 開発を進めていくのに必要になる手順の説明 (各ノードごとに項目を分けてください)
+#### 🔄 3回目：デザインとカスタマイズ性のレビュー
 
-#### A. ノードA (MCPサーバー/開発者サーバー) 側
+  * **課題:** 白黒のデフォルトだけでは味気なく、他の類似サービスと差別化できない。また、モバイル端末での表示崩れが懸念された。
+  * **改善:**
+      * 背景色（`bgColor`）と前景色（`fgColor`）を選べるカラーピッカーを追加。
+      * Tailwind CSSを使用し、カード型のデザイン、影（Shadow）、角丸（Rounded）を適用してモダンなSaaS風の見た目に調整。
+      * レスポンシブ対応（`w-full max-w-md`）を行い、スマホでもPCでも綺麗に見えるようにレイアウトを固定。
 
-1.  **環境設定:** Node.js (推奨バージョンを確認) およびnpmをインストールします。
-2.  **プロジェクト初期化:** プロジェクトディレクトリを作成し、`package.json`と`tsconfig.json`を設定します。
-3.  **依存関係のインストール:** `npm install`を実行し、`@modelcontextprotocol/sdk`, `express`, `zod`などの依存パッケージをインストールします。
-4.  **データ配置:** 和歌集データディレクトリを、絶対パス`/home/info-gather/wakashu_mcp_dir/wakashu_dir`に配置します。テストデータとして、`第1回`と`第2回`のディレクトリをファイル構造例 に従って作成します。
-5.  **コード実装:** `src/server.ts`と`src/wakashuTool.ts`を実装します。
-6.  **ビルド:** `npm run build` (`tsc`) を実行し、TypeScriptコードをJavaScript (ESM) にコンパイルします。
-7.  **サーバー起動:** `npm start` または `ts-node src/server.ts` を実行し、Streamable HTTPエンドポイント (`http://localhost:3000/mcp`) が利用可能であることを確認します。
+-----
 
-#### B. ノードB (MCPクライアント/ユーザーPC) 側
+このコードをコピペして `npm run dev` すれば、すぐに高品質なQRコード生成アプリが動きます。
 
-1.  **クライアントインストール:** Claude Desktopをインストールし、起動します。
-2.  **設定ファイル編集:** Claude Desktopの設定画面から「Developer」を開き、「Edit Config」を選択して`claude_desktop_config.json`を開きます。
-3.  **MCPサーバーの追加:** `mcpServers`キーに、ノードAのリモートアドレスとポートを指定したHTTPサーバー設定を追加します（例：ノードAが公開IPを持つ場合）。
-    ```json
-    {
-        "mcpServers": {
-            "wakashu": {
-                "type": "http",
-                "url": "http://[ノードAのIPアドレス]:3000/mcp"
-            }
-        }
-    }
-    ```
-4.  **再起動と確認:** Claude Desktopを再起動し、チャット画面の🔨アイコンから「和歌集ランキング情報取得」ツールが利用可能になっていることを確認します。
-
----
-
-### 8. テスト項目と実施方法 (各ノードごとに項目を分けてください)
-
-テストは、Toolの機能検証（ユニットテスト）とクライアントとの連携検証（統合テスト）に分けて実施します。
-
-#### A. ノードA (サーバー側/ユニットテスト)
-
-| テスト項目 | 実施方法 |
-| :--- | :--- |
-| **正常系 (フルレンジ)** | `InMemoryTransport` を使用し、`round: '第1回'`, `startRank: 1`, `endRank: 3`を入力。結果が3つの投稿を含み、それぞれにJSONテキストと画像コンテンツ（`type: 'image'`）が含まれていることを検証する。 |
-| **正常系 (シングル)** | `round: '第2回'`, `startRank: 2`, `endRank: 2`を入力。結果が1つの投稿のみを含んでいることを検証する。 |
-| **エラー系 (存在しない回)** | `round: '第99回'`, `startRank: 1`, `endRank: 3`を入力。応答に`isError: true`が含まれ、かつテキストメッセージが「指定された回のデータは見つかりませんでした。」と一致することを検証する。 |
-| **エラー系 (順位範囲外)** | `round: '第1回'`, `startRank: 10`, `endRank: 12`を入力。応答に`isError: true`が含まれ、かつテキストメッセージが「指定された順位の投稿は一つも見つかりませんでした。」と一致することを検証する。 |
-| **エラー系 (不正な入力)** | `startRank`に文字列など、スキーマ外の値を入力。JSON-RPCプロトコルエラー（例: `-32602` Invalid arguments）が返されることを検証する。 |
-| **セキュリティ (パス検証)** | Toolハンドラ内で、故意に不正なパス入力（例: `round: '../etc'`）をシミュレートし、`safeJoinPath`関数によってアクセスが阻止されることを検証する。 |
-
-#### B. ノードB (クライアント側/統合テスト)
-
-| テスト項目 | 実施方法 |
-| :--- | :--- |
-| **接続確認** | Claude Desktopを起動し、🔨アイコンに`wakashu_mcp_server`のToolが表示され、接続が確立していることを確認する。 |
-| **LLM連携テスト (成功)** | 「第1回の1位と2位の投稿を取得して」とClaudeにプロンプトを送信。Claudeが`search_wakashu_ranking`を正しく呼び出し、Tool実行を許可した後、結果として画像とテキストが表示されることを確認する。 |
-| **LLM連携テスト (エラー)** | 「存在しない第99回のランキングを取得して」とプロンプトを送信。ClaudeがToolを呼び出した後、サーバーからの`isError: true`の応答を受け取り、「データは見つかりませんでした」という趣旨の回答をユーザーに返すことを確認する。 |
-| **画像フォーマット確認** | `.png`, `.jpg`, `.webp`など、複数の画像形式のデータがテスト環境に用意されている場合、それぞれがBase64エンコードされ、ClaudeのUI上で正しく画像としてレンダリングされることを確認する。 |
-
----
-
-### 9. すべてのテスト項目をクリアした後のその他の手順 (具体的にお願いします)
-
-すべてのユニットテストおよび統合テストがクリアされ、機能が要件通りに動作することが確認された後、以下の手順を実施します。
-
-1.  **セキュリティ監査と脆弱性スキャン:**
-    *   外部からのアクセスが想定されるため、コードベース全体に対して静的解析ツールやセキュリティスキャンを実施し、依存ライブラリの既知の脆弱性（CVE）を確認します。
-    *   特に、ファイルI/Oを伴うロジックについて、パス検証（ディレクトリトラバーサル防止）の厳密なレビューを再度行います。
-2.  **デプロイメント環境のファイナライズ:**
-    *   本番環境または永続的なホスティング環境（例: AWS EC2, Google Cloud Runなど）にサーバーをデプロイします。
-    *   環境変数（`PORT`など）の設定を確認し、本番環境でのロギング設定（標準エラー出力へのログ出力 や、ロギングサービスへの連携）を有効にします。
-3.  **監視とアラートの設定:**
-    *   サーバーの稼働状況（稼働時間、応答時間）を監視するシステム（Prometheus, Grafana, CloudWatchなど）を設定します。
-    *   Tool実行時に発生した内部サーバーエラー（JSON-RPC `-32603`）や、`isError: true`が頻繁に返される Tool Execution Error を検知した場合に、開発者にアラートが通知されるように設定します。
-4.  **ドキュメント化と周知徹底:**
-    *   `wakashu_mcp_server`が提供するTool (`search_wakashu_ranking`) の仕様（入力/出力スキーマ、エラー挙動）を、LLM利用チームや運用者に共有します。
-    *   将来的にサーバー名が変更される可能性（「遠慮したラップトップ和歌集」から「ラップトップ和歌集」へ）に備え、クライアント側の設定変更が必要であることを周知するための手順書を準備します。
-
----
-
-### 10. 1から9までの項目では伝えきれなかったその他の情報についての補足
-
-#### 1. 将来的なResource Templateの活用
-現在、ランキング情報取得はToolとして実装されていますが、将来的にデータセットが複雑化し、LLMがデータ構造を事前に知ることが重要になった場合、Resource Templateの導入が有用です。
-*   **例:** `wakashu://{round}/ranking/{startRank}-{endRank}` のようなURIテンプレートを登録しておくことで、クライアントはToolを実行する前に、どのような構造でデータが取得可能かを認識できるようになります。
-*   これは、将来的な機能拡張（編纂時期に基づく検索など）を行う際に、ResourceのリストやURI補完機能 (`complete` API) を利用するための基盤となり得ます。
-
-#### 2. 画像データ処理の考慮点
-
-  * **問題点:**
-    MCPのImage ContentはBase64エンコードを使用しますが、もし `PictureX.png` が 50MB や 100MB といった非常に大きなファイルだった場合、サーバーのメモリを大幅に消費します。Base64エンコード後はデータサイズが約1.33倍になるため、レスポンスサイズも肥大化し、クライアント（Claude Desktop）側でも処理できなくなる可能性があります。
-
-  * **改善策:**
-    ファイルを読み込む前に `fs.stat` を使用してファイルサイズを確認します。一定の閾値（20MB）を超えるファイルは読み込みをスキップし、画像コンテンツ（`imageContent`）を `null` にします。これにより、サーバーのメモリ枯渇を防ぎます。
-
-#### 3. 効率的なディレクトリ読み込みによるパフォーマンス向上
-`round`（回）はリクエスト全体で共通であるため、`src/wakashuTool.ts`の`wakashuRankingHandler`において`fs.readdir(roundDir)` を `for` ループの *前* に一度だけ実行します。また、その際に `roundDir` が存在しない（例: '第99回'）場合のエラー（`ENOENT`）もループの前に捕捉し、即座にエラーを返します。これにより効率的なディレクトリ読み込みによるパフォーマンスの向上が見込めます。
-    
-#### 4. 開発環境におけるTransportの選択
-開発段階では、ローカルでの動作確認のために `stdio` Transportを利用することも一般的です。特にClaude Desktopで`command`と`args`を設定して利用する場合、内部的には`stdio`通信が使われるケースもあります。しかし、本設計ではリモートアクセスが必須であり、HTTPトランスポートをメインとしました。ローカルテストには、`InMemoryTransport`を利用したユニットテストが最も推奨されます。
-
----
-
-この設計は、MCPの公式SDKとプロトコル仕様に準拠し、提示された要件（リモートアクセス、動的パラメータ処理、画像応答、厳密なエラーハンドリング）を満たすものです。まるで、和歌集を収めた**厳重な書庫（ノードA）に、LLMという優秀な司書（ノードB）が、標準化された台帳（MCP）を通じて、必要な巻物（データ）を正確かつ安全に請求し、閲覧できるようにするプロセス**に例えることができます。
+**次に私にできることはありますか？**
+例えば、このアプリをVercelにデプロイする手順を案内したり、さらに機能（ロゴ画像の埋め込みなど）を追加したりすることも可能です。
