@@ -1,8 +1,9 @@
-<br>
+
 ----
 ▷eslint-plugin-simple-import-sortの導入方法をまとめて
 ----
 <br>
+
 ▷`eslint-plugin-simple-import-sort` を、今回の技術スタック（Next.js + TypeScript）に導入する手順をまとめました。
 
 手順は大きく分けて **「1. インストール」「2. 設定ファイルの編集」「3. 自動整形の有効化（VS Code）」** の3ステップです。
