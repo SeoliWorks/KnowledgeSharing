@@ -1,3 +1,74 @@
+----
+▷eslint-plugin-simple-import-sortとは？
+----
+<br>
+
+▷`eslint-plugin-simple-import-sort` は、ファイル上部にある **`import` 文（と `export` 文）を、自動的かつ強制的に並べ替えて整理してくれる ESLint のプラグイン**です。
+
+一言で言えば、**「import文の整頓係」**です。
+
+開発が進むと、以下のようにimport文が散らかってしまうことがよくあります。
+
+### ❌ 導入前の状態（Before）
+
+ライブラリ、自作コンポーネント、画像ファイル、CSSなどが無秩序に並んでいます。
+
+```typescript
+import { Button } from "@/components/ui/button"; // 自作コンポーネント
+import { useState } from "react"; // フレームワーク標準
+import { z } from "zod"; // 外部ライブラリ
+import { cn } from "@/lib/utils"; // ユーティリティ
+import "./global.css"; // スタイル
+import { Icon } from "lucide-react"; // 外部ライブラリ
+
+```
+
+これを、`eslint-plugin-simple-import-sort` を導入して保存（または `--fix` 実行）すると、以下のようになります。
+
+### ✅ 導入後の状態（After）
+
+ルールに基づいて、種類ごとにグループ化され、アルファベット順に整列します。
+
+```typescript
+// 1. フレームワーク・外部ライブラリ (react, next, zodなど)
+import { Icon } from "lucide-react";
+import { useState } from "react";
+import { z } from "zod";
+
+// 2. 絶対パスインポート (@/...)
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+// 3. スタイル (css)
+import "./global.css";
+
+```
+
+---
+
+### なぜこれが重要なのか？（メリット）
+
+1. **コードの可読性向上**
+* 「どのライブラリを使っているか」「どのコンポーネントに依存しているか」がひと目で分かります。
+
+
+2. **チーム開発での無駄な議論の排除**
+* 「Reactのimportは一番上に書くべきか？」「アルファベット順にするべきか？」といった、本質的でない議論やレビューの指摘を自動化できます。
+
+
+3. **マージ競合（コンフリクト）の軽減**
+* 常に同じルールで並び替えられるため、複数人が同じファイルにimportを追加した際、行が入り乱れてコンフリクトするリスクを減らせます。
+
+
+
+### 補足：なぜ "Simple" なのか？
+
+他にも `eslint-plugin-import` という有名なプラグインがありますが、設定が非常に複雑で難しいという欠点がありました。
+この `simple-import-sort` は、**「細かい設定は不要。プラグインが推奨する『一番良い並び順』に全部任せる」** という思想で作られているため、導入が非常に簡単です。
+
+---
+
+今回のようなモダンなスタック（Next.js + TypeScript）では、ファイルの先頭にimportが数十行並ぶことも珍しくないため、**ほぼ必須レベルで導入されているツール**です。
 
 ----
 ▷eslint-plugin-simple-import-sortの導入方法をまとめて
